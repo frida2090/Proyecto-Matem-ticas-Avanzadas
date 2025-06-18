@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Descomposición de Audio con Fourier</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/complex.js@2.1.1/complex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fft-js@1.0.0/fft.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .panel {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .chart-container {
+            height: 300px;
+            margin-bottom: 15px;
+        }
+        h1, h2 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        h2 {
+            margin-top: 0;
+            font-size: 1.4rem;
+        }
+        button {
+            background-color: #3498db;
+            border: none;
+            color: white;
+            padding: 12px 24px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 10px 2px;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .status {
+            margin: 15px 0;
+            padding: 12px;
+            border-radius: 6px;
+            font-weight: 500;
+        }
+        .active {
+            background-color: #d5f5e3;
+            color: #27ae60;
+            border-left: 4px solid #27ae60;
+        }
+        .error {
+            background-color: #fadbd8;
+            color: #e74c3c;
+            border-left: 4px solid #e74c3c;
+        }
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        label {
+            font-weight: 600;
+            color: #34495e;
+        }
+        select, input[type="range"] {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        .math-card {
+            background-color: #f0f8ff;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+            font-family: 'Courier New', monospace;
+            overflow-x: auto;
+            border-left: 4px solid #3498db;
+        }
+        .coefficients {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .coeff-card {
+            background: #eaf2f8;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+            font-size: 0.9rem;
+        }
+        .harmonics-control {
+            margin-top: 15px;
+        }
+        .harmonic-item {
+            margin-bottom: 10px;
+        }
+        .reconstruction-controls {
+            grid-column: 1 / -1;
+        }
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+
+    
+</head>
+<body>
+    <h1>Descomposición y Reconstrucción de Audio con Fourier</h1>
+    
+    <div class="container">
+        <!-- Panel de entrada de audio -->
+        <div class="panel">
+            <h2>Entrada de Audio</h2>
+            <div class="controls">
+                <button id="startButton">Iniciar Micrófono</button>
+                <div id="status" class="status">Presiona "Iniciar Micrófono" para comenzar</div>
+                
+                <div class="control-group">
+                    <label for="fftSize">Resolución FFT:</label>
+                    <select id="fftSize">
+                        <option value="64">64 puntos</option>
+                        <option value="128">128 puntos</option>
+                        <option value="256" selected>256 puntos</option>
+                        <option value="512">512 puntos</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="chart-container">
+                <canvas id="timeChart"></canvas>
+            </div>
+            
+            <div class="math-card">
+                <h3>Descomposición de Fourier</h3>
+                <p>La señal de audio f(t) se descompone en:</p>
+                <p>f(t) = a₀ + Σ [aₙ·cos(nωt) + bₙ·sin(nωt)]</p>
+                <p>Donde:</p>
+                <ul>
+                    <li>a₀ = Componente DC (promedio)</li>
+                    <li>aₙ, bₙ = Coeficientes de Fourier</li>
+                    <li>ω = Frecuencia fundamental</li>
+                    <li>n = Número de armónico</li>
+                </ul>
+            </div>
+        </div>
+        
+        <!-- Panel de reconstrucción -->
+        <div class="panel">
+            <h2>Reconstrucción con Series de Fourier</h2>
+            
+            <div class="chart-container">
+                <canvas id="reconstructionChart"></canvas>
+            </div>
+            
+            <div class="controls reconstruction-controls">
+                <div class="control-group">
+                    <label for="harmonics">Armónicos a incluir:</label>
+                    <input type="range" id="harmonics" min="1" max="20" value="5">
+                    <span id="harmonicsValue">5 armónicos</span>
+                </div>
+                
+                <div id="harmonicControls" class="harmonics-control">
+                    <!-- Controles para cada armónico se generarán aquí -->
+                </div>
+            </div>
+            
+            <div class="math-card">
+                <h3>Cálculo de Coeficientes</h3>
+                <div id="coefficientsDisplay" class="coefficients">
+                    <!-- Coeficientes se mostrarán aquí -->
+                </div>
+                <p>Reconstrucción actual:</p>
+                <p id="reconstructionFormula">f(t) = </p>
+            </div>
+        </div>
+        
+        <!-- Espectro de frecuencia -->
+        <div class="panel" style="grid-column: span 2;">
+            <h2>Espectro de Frecuencia</h2>
+            <div class="chart-container">
+                <canvas id="freqChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+<script>
+    // Elementos del DOM
+    const startButton = document.getElementById('startButton');
+    const statusDiv = document.getElementById('status');
+    const fftSizeSelect = document.getElementById('fftSize');
+    const harmonicsSlider = document.getElementById('harmonics');
+    const harmonicsValue = document.getElementById('harmonicsValue');
+    const harmonicControls = document.getElementById('harmonicControls');
+    const coefficientsDisplay = document.getElementById('coefficientsDisplay');
+    const reconstructionFormula = document.getElementById('reconstructionFormula');
+    
+    // Configuración de audio
+    let audioContext;
+    let analyser;
+    let microphone;
+    let isRecording = false;
+    let timeDomainData = [];
+    let frequencyData = [];
+    let sampleRate = 44100;
+    
+    // Configuración de Fourier
+    let fft;
+    let coefficients = [];
+    let numHarmonics = 5;
+    let harmonicAmplitudes = Array(20).fill(0).map((_, i) => i === 0 ? 1 : 0);
+    let harmonicPhases = Array(20).fill(0);
+    
+    // Gráficos
+    const timeCtx = document.getElementById('timeChart').getContext('2d');
+    const reconstructionCtx = document.getElementById('reconstructionChart').getContext('2d');
+    const freqCtx = document.getElementById('freqChart').getContext('2d');
+    
+    let timeChart = new Chart(timeCtx, {
+        type: 'line',
+        data: { 
+            labels: [],
+            datasets: [{ 
+                label: 'Señal Original', 
+                borderColor: 'rgb(75, 192, 192)',
+                borderWidth: 1.5,
+                data: [] 
+            }] 
+        },
+        options: { 
+            responsive: true, 
+            animation: { duration: 0 },
+            scales: { 
+                x: { title: { display: true, text: 'Muestras' } }, 
+                y: { 
+                    title: { display: true, text: 'Amplitud' },
+                    min: -1,
+                    max: 1
+                } 
+            } 
+        }
+    });
+    
+    let reconstructionChart = new Chart(reconstructionCtx, {
+        type: 'line',
+        data: { 
+            labels: [],
+            datasets: [
+                {
+                    label: 'Señal Original',
+                    borderColor: 'rgba(75, 192, 192, 0.5)',
+                    borderWidth: 1,
+                    data: []
+                },
+                {
+                    label: 'Reconstrucción',
+                    borderColor: 'rgb(231, 76, 60)',
+                    borderWidth: 1.5,
+                    data: []
+                }
+            ] 
+        },
+        options: { 
+            responsive: true, 
+            animation: { duration: 0 },
+            scales: { 
+                x: { title: { display: true, text: 'Muestras' } }, 
+                y: { 
+                    title: { display: true, text: 'Amplitud' },
+                    min: -1,
+                    max: 1
+                } 
+            } 
+        }
+    });
+    
+    let freqChart = new Chart(freqCtx, {
+        type: 'bar',
+        data: { 
+            labels: [],
+            datasets: [{ 
+                label: 'Espectro de Frecuencia', 
+                backgroundColor: 'rgb(54, 162, 235)',
+                data: [] 
+            }] 
+        },
+        options: { 
+            responsive: true, 
+            animation: { duration: 0 },
+            scales: { 
+                x: { title: { display: true, text: 'Frecuencia (Hz)' } }, 
+                y: { 
+                    title: { display: true, text: 'Magnitud (dB)' },
+                    min: -100,
+                    max: 0
+                } 
+            } 
+        }
+    });
+    
+    // Inicializar FFT - CORRECCIÓN IMPORTANTE
+    function initFFT(size) {
+        // fft.js se usa así:
+        fft = new FFT.complex(size, false);
+        coefficients = {
+            real: new Float32Array(size),
+            imag: new Float32Array(size)
+        };
+    }
+    
+    // Manejar el botón de inicio/parada
+    startButton.addEventListener('click', async () => {
+        if (!isRecording) {
+            try {
+                await startRecording();
+                startButton.textContent = "Detener Micrófono";
+                startButton.style.backgroundColor = "#e74c3c";
+                statusDiv.textContent = "Micrófono activo. Habla o produce sonidos...";
+                statusDiv.className = "status active";
+                isRecording = true;
+            } catch (error) {
+                statusDiv.textContent = "Error: " + error.message;
+                statusDiv.className = "status error";
+                console.error("Error al acceder al micrófono:", error);
+            }
+        } else {
+            stopRecording();
+            startButton.textContent = "Iniciar Micrófono";
+            startButton.style.backgroundColor = "#3498db";
+            statusDiv.textContent = "Micrófono detenido";
+            statusDiv.className = "status";
+            isRecording = false;
+        }
+    });
+    
+    // Cambiar resolución FFT
+    fftSizeSelect.addEventListener('change', () => {
+        if (analyser) {
+            analyser.fftSize = parseInt(fftSizeSelect.value);
+            initFFT(analyser.fftSize);
+            updateCharts();
+        }
+    });
+    
+    // Cambiar número de armónicos
+    harmonicsSlider.addEventListener('input', function() {
+        numHarmonics = parseInt(this.value);
+        harmonicsValue.textContent = numHarmonics + " armónicos";
+        createHarmonicControls();
+        updateReconstruction();
+    });
+    
+    // Crear controles para armónicos
+    function createHarmonicControls() {
+        harmonicControls.innerHTML = '';
+        coefficientsDisplay.innerHTML = '';
+        
+        for (let i = 0; i < numHarmonics; i++) {
+            // Controles deslizantes
+            const div = document.createElement('div');
+            div.className = 'harmonic-item';
+            
+            const label = document.createElement('label');
+            label.textContent = `Armónico ${i+1}:`;
+            
+            const slider = document.createElement('input');
+            slider.type = 'range';
+            slider.min = '0';
+            slider.max = '100';
+            slider.value = harmonicAmplitudes[i] * 100;
+            slider.dataset.index = i;
+            
+            const valueSpan = document.createElement('span');
+            valueSpan.className = 'value-display';
+            valueSpan.textContent = ` ${(harmonicAmplitudes[i] * 100).toFixed(0)}%`;
+            
+            slider.addEventListener('input', function() {
+                const index = parseInt(this.dataset.index);
+                harmonicAmplitudes[index] = parseInt(this.value) / 100;
+                valueSpan.textContent = ` ${(harmonicAmplitudes[index] * 100).toFixed(0)}%`;
+                updateReconstruction();
+            });
+            
+            div.appendChild(label);
+            div.appendChild(slider);
+            div.appendChild(valueSpan);
+            harmonicControls.appendChild(div);
+            
+            // Tarjetas de coeficientes
+            const coeffCard = document.createElement('div');
+            coeffCard.className = 'coeff-card';
+            coeffCard.id = `coeff${i}`;
+            coeffCard.innerHTML = `
+                <strong>Armónico ${i+1}</strong><br>
+                a${i} = <span class="a-value">0</span><br>
+                b${i} = <span class="b-value">0</span>
+            `;
+            coefficientsDisplay.appendChild(coeffCard);
+        }
+    }
+    
+    // Iniciar la grabación
+    async function startRecording() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = parseInt(fftSizeSelect.value);
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+                
+                // Iniciar la visualización
+                requestAnimationFrame(updateCharts);
+            } catch (error) {
+                throw error;
+            }
+        }
+    
+    // Detener la grabación
+    function stopRecording() {
+        if (microphone) {
+            microphone.disconnect();
+            const stream = microphone.mediaStream;
+            stream.getTracks().forEach(track => track.stop());
+        }
+        if (audioContext) {
+            if (audioContext.state !== 'closed') {
+                audioContext.close();
+            }
+        }
+    }
+    
+    // Actualizar gráficos
+    function updateCharts() {
+        if (!analyser || !isRecording) return;
+        
+        // Obtener datos de tiempo
+        const bufferLength = analyser.fftSize;
+        timeDomainData = new Float32Array(bufferLength);
+        analyser.getFloatTimeDomainData(timeDomainData);
+        
+        // Obtener datos de frecuencia
+        frequencyData = new Float32Array(analyser.frequencyBinCount);
+        analyser.getFloatFrequencyData(frequencyData);
+        
+        // Calcular coeficientes de Fourier
+        calculateCoefficients(timeDomainData);
+        
+        // Preparar etiquetas
+        const labels = Array.from({length: bufferLength}, (_, i) => i);
+        
+        // Actualizar gráfico de tiempo
+        timeChart.data.labels = labels;
+        timeChart.data.datasets[0].data = Array.from(timeDomainData);
+        timeChart.update();
+        
+        // Actualizar gráfico de frecuencia
+        freqChart.data.labels = Array.from({length: frequencyData.length}, (_, i) => 
+            Math.round(i * sampleRate / analyser.fftSize)
+        );
+        freqChart.data.datasets[0].data = Array.from(frequencyData);
+        freqChart.update();
+        
+        // Actualizar reconstrucción
+        updateReconstruction();
+        
+        // Continuar la animación
+        requestAnimationFrame(updateCharts);
+    }
+    
+    // Calcular coeficientes de Fourier - CORRECCIÓN IMPORTANTE
+    function calculateCoefficients(signal) {
+        const N = signal.length;
+        
+        // Convertir la señal a formato compatible con fft.js
+        const complexSignal = {
+            real: new Float32Array(N),
+            imag: new Float32Array(N)
+        };
+        
+        for (let i = 0; i < N; i++) {
+            complexSignal.real[i] = signal[i];
+            complexSignal.imag[i] = 0;
+        }
+        
+        // Calcular FFT
+        fft.simple(coefficients, complexSignal.real, complexSignal.imag);
+        
+        // Actualizar tarjetas de coeficientes
+        for (let i = 0; i < numHarmonics; i++) {
+            const coeffCard = document.getElementById(`coeff${i}`);
+            if (coeffCard) {
+                const a = coefficients.real[i] / N * 2;
+                const b = coefficients.imag[i] / N * 2;
+                
+                coeffCard.querySelector('.a-value').textContent = a.toExponential(2);
+                coeffCard.querySelector('.b-value').textContent = b.toExponential(2);
+                
+                // Almacenar amplitud y fase para reconstrucción
+                harmonicAmplitudes[i] = Math.sqrt(a*a + b*b);
+                harmonicPhases[i] = Math.atan2(b, a);
+            }
+        }
+    }
+    
+    // Actualizar reconstrucción
+    function updateReconstruction() {
+        if (timeDomainData.length === 0) return;
+        
+        const N = timeDomainData.length;
+        const reconstructedSignal = new Array(N).fill(0);
+        const fundamentalFreq = sampleRate / N;
+        
+        // Reconstruir señal con los armónicos seleccionados
+        for (let n = 0; n < numHarmonics; n++) {
+            if (harmonicAmplitudes[n] > 0) {
+                const amplitude = harmonicAmplitudes[n];
+                const phase = harmonicPhases[n];
+                const freq = n * fundamentalFreq;
+                
+                for (let t = 0; t < N; t++) {
+                    const angle = 2 * Math.PI * freq * t / sampleRate + phase;
+                    reconstructedSignal[t] += amplitude * Math.cos(angle);
+                }
+            }
+        }
+        
+        // Normalizar la señal reconstruida
+        const maxVal = Math.max(...reconstructedSignal.map(Math.abs));
+        if (maxVal > 0) {
+            for (let t = 0; t < N; t++) {
+                reconstructedSignal[t] /= maxVal;
+            }
+        }
+        
+        // Actualizar gráfico de reconstrucción
+        reconstructionChart.data.labels = Array.from({length: N}, (_, i) => i);
+        reconstructionChart.data.datasets[0].data = Array.from(timeDomainData);
+        reconstructionChart.data.datasets[1].data = reconstructedSignal;
+        reconstructionChart.update();
+        
+        // Actualizar fórmula matemática
+        updateFormula();
+    }
+    
+    // Actualizar fórmula de reconstrucción
+    function updateFormula() {
+        let formula = "f(t) ≈ ";
+        const fundamentalFreq = sampleRate / analyser.fftSize;
+        
+        for (let n = 0; n < numHarmonics; n++) {
+            if (harmonicAmplitudes[n] > 0.01) {
+                const amplitude = harmonicAmplitudes[n].toFixed(2);
+                const phase = harmonicPhases[n].toFixed(2);
+                const freq = (n * fundamentalFreq).toFixed(0);
+                
+                if (n > 0) formula += " + ";
+                formula += `${amplitude}·cos(2π·${freq}·t + ${phase})`;
+            }
+        }
+        
+        reconstructionFormula.textContent = formula;
+    }
+    
+    // Inicialización
+    
+</script>
+</body>
+</html>
