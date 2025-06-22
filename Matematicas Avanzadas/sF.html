@@ -6,7 +6,7 @@
     <title>Descomposición de Audio con Fourier</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/complex.js@2.1.1/complex.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/fft-js@1.0.0/fft.js"></script>
+    
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -212,387 +212,347 @@
         </div>
     </div>
 
-<script>
-    // Elementos del DOM
-    const startButton = document.getElementById('startButton');
-    const statusDiv = document.getElementById('status');
-    const fftSizeSelect = document.getElementById('fftSize');
-    const harmonicsSlider = document.getElementById('harmonics');
-    const harmonicsValue = document.getElementById('harmonicsValue');
-    const harmonicControls = document.getElementById('harmonicControls');
-    const coefficientsDisplay = document.getElementById('coefficientsDisplay');
-    const reconstructionFormula = document.getElementById('reconstructionFormula');
-    
-    // Configuración de audio
-    let audioContext;
-    let analyser;
-    let microphone;
-    let isRecording = false;
-    let timeDomainData = [];
-    let frequencyData = [];
-    let sampleRate = 44100;
-    
-    // Configuración de Fourier
-    let fft;
-    let coefficients = [];
-    let numHarmonics = 5;
-    let harmonicAmplitudes = Array(20).fill(0).map((_, i) => i === 0 ? 1 : 0);
-    let harmonicPhases = Array(20).fill(0);
-    
-    // Gráficos
-    const timeCtx = document.getElementById('timeChart').getContext('2d');
-    const reconstructionCtx = document.getElementById('reconstructionChart').getContext('2d');
-    const freqCtx = document.getElementById('freqChart').getContext('2d');
-    
-    let timeChart = new Chart(timeCtx, {
-        type: 'line',
-        data: { 
-            labels: [],
-            datasets: [{ 
-                label: 'Señal Original', 
-                borderColor: 'rgb(75, 192, 192)',
-                borderWidth: 1.5,
-                data: [] 
-            }] 
-        },
-        options: { 
-            responsive: true, 
-            animation: { duration: 0 },
-            scales: { 
-                x: { title: { display: true, text: 'Muestras' } }, 
-                y: { 
-                    title: { display: true, text: 'Amplitud' },
-                    min: -1,
-                    max: 1
-                } 
-            } 
+    <script>
+
+// FFT mínima para navegador - solo amplitudes
+function basicFFT(signal) {
+    const N = signal.length;
+    const result = [];
+
+    for (let k = 0; k < N; k++) {
+        let re = 0, im = 0;
+        for (let n = 0; n < N; n++) {
+            const angle = (2 * Math.PI * k * n) / N;
+            re += signal[n] * Math.cos(angle);
+            im -= signal[n] * Math.sin(angle);
         }
-    });
+        result[k] = [re, im];
+    }
+
+    return result;
+}
+
+
+        const startButton = document.getElementById('startButton');
+        const statusDiv = document.getElementById('status');
+        const fftSizeSelect = document.getElementById('fftSize');
+        const harmonicsSlider = document.getElementById('harmonics');
+        const harmonicsValue = document.getElementById('harmonicsValue');
+        const harmonicControls = document.getElementById('harmonicControls');
+        const coefficientsDisplay = document.getElementById('coefficientsDisplay');
+        const reconstructionFormula = document.getElementById('reconstructionFormula');
     
-    let reconstructionChart = new Chart(reconstructionCtx, {
-        type: 'line',
-        data: { 
-            labels: [],
-            datasets: [
-                {
+        let audioContext;
+        let analyser;
+        let microphone;
+        let isRecording = false;
+        let timeDomainData = [];
+        let frequencyData = [];
+        let sampleRate = 44100;
+    
+        let numHarmonics = 5;
+        let harmonicAmplitudes = Array(20).fill(0).map((_, i) => i === 0 ? 1 : 0);
+        let harmonicPhases = Array(20).fill(0);
+    
+        const timeCtx = document.getElementById('timeChart').getContext('2d');
+        const reconstructionCtx = document.getElementById('reconstructionChart').getContext('2d');
+        const freqCtx = document.getElementById('freqChart').getContext('2d');
+    
+        let timeChart = new Chart(timeCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
                     label: 'Señal Original',
-                    borderColor: 'rgba(75, 192, 192, 0.5)',
-                    borderWidth: 1,
-                    data: []
-                },
-                {
-                    label: 'Reconstrucción',
-                    borderColor: 'rgb(231, 76, 60)',
+                    borderColor: 'rgb(75, 192, 192)',
                     borderWidth: 1.5,
                     data: []
+                }]
+            },
+            options: {
+                responsive: true,
+                animation: { duration: 0 },
+                scales: {
+                    x: { title: { display: true, text: 'Muestras' } },
+                    y: {
+                        title: { display: true, text: 'Amplitud' },
+                        min: -1,
+                        max: 1
+                    }
                 }
-            ] 
-        },
-        options: { 
-            responsive: true, 
-            animation: { duration: 0 },
-            scales: { 
-                x: { title: { display: true, text: 'Muestras' } }, 
-                y: { 
-                    title: { display: true, text: 'Amplitud' },
-                    min: -1,
-                    max: 1
-                } 
-            } 
-        }
-    });
-    
-    let freqChart = new Chart(freqCtx, {
-        type: 'bar',
-        data: { 
-            labels: [],
-            datasets: [{ 
-                label: 'Espectro de Frecuencia', 
-                backgroundColor: 'rgb(54, 162, 235)',
-                data: [] 
-            }] 
-        },
-        options: { 
-            responsive: true, 
-            animation: { duration: 0 },
-            scales: { 
-                x: { title: { display: true, text: 'Frecuencia (Hz)' } }, 
-                y: { 
-                    title: { display: true, text: 'Magnitud (dB)' },
-                    min: -100,
-                    max: 0
-                } 
-            } 
-        }
-    });
-    
-    // Inicializar FFT - CORRECCIÓN IMPORTANTE
-    function initFFT(size) {
-        // fft.js se usa así:
-        fft = new FFT.complex(size, false);
-        coefficients = {
-            real: new Float32Array(size),
-            imag: new Float32Array(size)
-        };
-    }
-    
-    // Manejar el botón de inicio/parada
-    startButton.addEventListener('click', async () => {
-        if (!isRecording) {
-            try {
-                await startRecording();
-                startButton.textContent = "Detener Micrófono";
-                startButton.style.backgroundColor = "#e74c3c";
-                statusDiv.textContent = "Micrófono activo. Habla o produce sonidos...";
-                statusDiv.className = "status active";
-                isRecording = true;
-            } catch (error) {
-                statusDiv.textContent = "Error: " + error.message;
-                statusDiv.className = "status error";
-                console.error("Error al acceder al micrófono:", error);
             }
-        } else {
-            stopRecording();
-            startButton.textContent = "Iniciar Micrófono";
-            startButton.style.backgroundColor = "#3498db";
-            statusDiv.textContent = "Micrófono detenido";
-            statusDiv.className = "status";
-            isRecording = false;
+        });
+    
+        let reconstructionChart = new Chart(reconstructionCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'Señal Original',
+                        borderColor: 'rgba(75, 192, 192, 0.5)',
+                        borderWidth: 1,
+                        data: []
+                    },
+                    {
+                        label: 'Reconstrucción',
+                        borderColor: 'rgb(231, 76, 60)',
+                        borderWidth: 1.5,
+                        data: []
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                animation: { duration: 0 },
+                scales: {
+                    x: { title: { display: true, text: 'Muestras' } },
+                    y: {
+                        title: { display: true, text: 'Amplitud' },
+                        min: -1,
+                        max: 1
+                    }
+                }
+            }
+        });
+    
+        let freqChart = new Chart(freqCtx, {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Espectro de Frecuencia',
+                    backgroundColor: 'rgb(54, 162, 235)',
+                    data: []
+                }]
+            },
+            options: {
+                responsive: true,
+                animation: { duration: 0 },
+                scales: {
+                    x: { title: { display: true, text: 'Frecuencia (Hz)' } },
+                    y: {
+                        title: { display: true, text: 'Magnitud (dB)' },
+                        min: -100,
+                        max: 0
+                    }
+                }
+            }
+        });
+    
+        // Botón Iniciar/Detener Micrófono
+        startButton.addEventListener('click', async () => {
+            if (!isRecording) {
+                try {
+                    await startRecording();
+                    startButton.textContent = "Detener Micrófono";
+                    startButton.style.backgroundColor = "#e74c3c";
+                    statusDiv.textContent = "Micrófono activo. Habla o produce sonidos...";
+                    statusDiv.className = "status active";
+                    isRecording = true;
+                } catch (error) {
+                    statusDiv.textContent = "Error: " + error.message;
+                    statusDiv.className = "status error";
+                    console.error("Error al acceder al micrófono:", error);
+                }
+            } else {
+                stopRecording();
+                startButton.textContent = "Iniciar Micrófono";
+                startButton.style.backgroundColor = "#3498db";
+                statusDiv.textContent = "Micrófono detenido";
+                statusDiv.className = "status";
+                isRecording = false;
+            }
+        });
+    
+        fftSizeSelect.addEventListener('change', () => {
+            if (analyser) {
+                analyser.fftSize = parseInt(fftSizeSelect.value);
+            }
+        });
+    
+        harmonicsSlider.addEventListener('input', function () {
+            numHarmonics = parseInt(this.value);
+            harmonicsValue.textContent = numHarmonics + " armónicos";
+            createHarmonicControls();
+            updateReconstruction();
+        });
+    
+        function createHarmonicControls() {
+            harmonicControls.innerHTML = '';
+            coefficientsDisplay.innerHTML = '';
+    
+            for (let i = 0; i < numHarmonics; i++) {
+                const div = document.createElement('div');
+                div.className = 'harmonic-item';
+    
+                const label = document.createElement('label');
+                label.textContent = `Armónico ${i + 1}:`;
+    
+                const slider = document.createElement('input');
+                slider.type = 'range';
+                slider.min = '0';
+                slider.max = '100';
+                slider.value = harmonicAmplitudes[i] * 100;
+                slider.dataset.index = i;
+    
+                const valueSpan = document.createElement('span');
+                valueSpan.className = 'value-display';
+                valueSpan.textContent = ` ${(harmonicAmplitudes[i] * 100).toFixed(0)}%`;
+    
+                slider.addEventListener('input', function () {
+                    const index = parseInt(this.dataset.index);
+                    harmonicAmplitudes[index] = parseInt(this.value) / 100;
+                    valueSpan.textContent = ` ${(harmonicAmplitudes[index] * 100).toFixed(0)}%`;
+                    updateReconstruction();
+                });
+    
+                div.appendChild(label);
+                div.appendChild(slider);
+                div.appendChild(valueSpan);
+                harmonicControls.appendChild(div);
+    
+                const coeffCard = document.createElement('div');
+                coeffCard.className = 'coeff-card';
+                coeffCard.id = `coeff${i}`;
+                coeffCard.innerHTML = `
+                    <strong>Armónico ${i + 1}</strong><br>
+                    a${i} = <span class="a-value">0</span><br>
+                    b${i} = <span class="b-value">0</span>
+                `;
+                coefficientsDisplay.appendChild(coeffCard);
+            }
         }
-    });
     
-    // Cambiar resolución FFT
-    fftSizeSelect.addEventListener('change', () => {
-        if (analyser) {
-            analyser.fftSize = parseInt(fftSizeSelect.value);
-            initFFT(analyser.fftSize);
-            updateCharts();
-        }
-    });
-    
-    // Cambiar número de armónicos
-    harmonicsSlider.addEventListener('input', function() {
-        numHarmonics = parseInt(this.value);
-        harmonicsValue.textContent = numHarmonics + " armónicos";
-        createHarmonicControls();
-        updateReconstruction();
-    });
-    
-    // Crear controles para armónicos
-    function createHarmonicControls() {
-        harmonicControls.innerHTML = '';
-        coefficientsDisplay.innerHTML = '';
-        
-        for (let i = 0; i < numHarmonics; i++) {
-            // Controles deslizantes
-            const div = document.createElement('div');
-            div.className = 'harmonic-item';
-            
-            const label = document.createElement('label');
-            label.textContent = `Armónico ${i+1}:`;
-            
-            const slider = document.createElement('input');
-            slider.type = 'range';
-            slider.min = '0';
-            slider.max = '100';
-            slider.value = harmonicAmplitudes[i] * 100;
-            slider.dataset.index = i;
-            
-            const valueSpan = document.createElement('span');
-            valueSpan.className = 'value-display';
-            valueSpan.textContent = ` ${(harmonicAmplitudes[i] * 100).toFixed(0)}%`;
-            
-            slider.addEventListener('input', function() {
-                const index = parseInt(this.dataset.index);
-                harmonicAmplitudes[index] = parseInt(this.value) / 100;
-                valueSpan.textContent = ` ${(harmonicAmplitudes[index] * 100).toFixed(0)}%`;
-                updateReconstruction();
-            });
-            
-            div.appendChild(label);
-            div.appendChild(slider);
-            div.appendChild(valueSpan);
-            harmonicControls.appendChild(div);
-            
-            // Tarjetas de coeficientes
-            const coeffCard = document.createElement('div');
-            coeffCard.className = 'coeff-card';
-            coeffCard.id = `coeff${i}`;
-            coeffCard.innerHTML = `
-                <strong>Armónico ${i+1}</strong><br>
-                a${i} = <span class="a-value">0</span><br>
-                b${i} = <span class="b-value">0</span>
-            `;
-            coefficientsDisplay.appendChild(coeffCard);
-        }
-    }
-    
-    // Iniciar la grabación
-    async function startRecording() {
+        async function startRecording() {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             analyser = audioContext.createAnalyser();
             analyser.fftSize = parseInt(fftSizeSelect.value);
-            
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                microphone = audioContext.createMediaStreamSource(stream);
-                microphone.connect(analyser);
-                
-                // Iniciar la visualización
-                requestAnimationFrame(updateCharts);
-            } catch (error) {
-                throw error;
-            }
+            sampleRate = audioContext.sampleRate;
+    
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            microphone = audioContext.createMediaStreamSource(stream);
+            microphone.connect(analyser);
+    
+            requestAnimationFrame(updateCharts);
         }
     
-    // Detener la grabación
-    function stopRecording() {
-        if (microphone) {
-            microphone.disconnect();
-            const stream = microphone.mediaStream;
-            stream.getTracks().forEach(track => track.stop());
-        }
-        if (audioContext) {
-            if (audioContext.state !== 'closed') {
+        function stopRecording() {
+            if (microphone) {
+                microphone.disconnect();
+                const stream = microphone.mediaStream;
+                stream.getTracks().forEach(track => track.stop());
+            }
+            if (audioContext && audioContext.state !== 'closed') {
                 audioContext.close();
             }
         }
-    }
     
-    // Actualizar gráficos
-    function updateCharts() {
-        if (!analyser || !isRecording) return;
-        
-        // Obtener datos de tiempo
-        const bufferLength = analyser.fftSize;
-        timeDomainData = new Float32Array(bufferLength);
-        analyser.getFloatTimeDomainData(timeDomainData);
-        
-        // Obtener datos de frecuencia
-        frequencyData = new Float32Array(analyser.frequencyBinCount);
-        analyser.getFloatFrequencyData(frequencyData);
-        
-        // Calcular coeficientes de Fourier
-        calculateCoefficients(timeDomainData);
-        
-        // Preparar etiquetas
-        const labels = Array.from({length: bufferLength}, (_, i) => i);
-        
-        // Actualizar gráfico de tiempo
-        timeChart.data.labels = labels;
-        timeChart.data.datasets[0].data = Array.from(timeDomainData);
-        timeChart.update();
-        
-        // Actualizar gráfico de frecuencia
-        freqChart.data.labels = Array.from({length: frequencyData.length}, (_, i) => 
-            Math.round(i * sampleRate / analyser.fftSize)
-        );
-        freqChart.data.datasets[0].data = Array.from(frequencyData);
-        freqChart.update();
-        
-        // Actualizar reconstrucción
-        updateReconstruction();
-        
-        // Continuar la animación
-        requestAnimationFrame(updateCharts);
-    }
+        function updateCharts() {
+            if (!analyser || !isRecording) return;
     
-    // Calcular coeficientes de Fourier - CORRECCIÓN IMPORTANTE
-    function calculateCoefficients(signal) {
-        const N = signal.length;
-        
-        // Convertir la señal a formato compatible con fft.js
-        const complexSignal = {
-            real: new Float32Array(N),
-            imag: new Float32Array(N)
-        };
-        
-        for (let i = 0; i < N; i++) {
-            complexSignal.real[i] = signal[i];
-            complexSignal.imag[i] = 0;
+            const bufferLength = analyser.fftSize;
+            timeDomainData = new Float32Array(bufferLength);
+            analyser.getFloatTimeDomainData(timeDomainData);
+    
+            frequencyData = new Float32Array(analyser.frequencyBinCount);
+            analyser.getFloatFrequencyData(frequencyData);
+    
+            calculateCoefficients(timeDomainData);
+    
+            const labels = Array.from({ length: bufferLength }, (_, i) => i);
+    
+            timeChart.data.labels = labels;
+            timeChart.data.datasets[0].data = Array.from(timeDomainData);
+            timeChart.update();
+    
+            freqChart.data.labels = Array.from({ length: frequencyData.length }, (_, i) =>
+                Math.round(i * sampleRate / analyser.fftSize)
+            );
+            freqChart.data.datasets[0].data = Array.from(frequencyData);
+            freqChart.update();
+    
+            updateReconstruction();
+    
+            requestAnimationFrame(updateCharts);
         }
-        
-        // Calcular FFT
-        fft.simple(coefficients, complexSignal.real, complexSignal.imag);
-        
-        // Actualizar tarjetas de coeficientes
-        for (let i = 0; i < numHarmonics; i++) {
-            const coeffCard = document.getElementById(`coeff${i}`);
-            if (coeffCard) {
-                const a = coefficients.real[i] / N * 2;
-                const b = coefficients.imag[i] / N * 2;
-                
-                coeffCard.querySelector('.a-value').textContent = a.toExponential(2);
-                coeffCard.querySelector('.b-value').textContent = b.toExponential(2);
-                
-                // Almacenar amplitud y fase para reconstrucción
-                harmonicAmplitudes[i] = Math.sqrt(a*a + b*b);
-                harmonicPhases[i] = Math.atan2(b, a);
-            }
-        }
-    }
     
-    // Actualizar reconstrucción
-    function updateReconstruction() {
-        if (timeDomainData.length === 0) return;
-        
-        const N = timeDomainData.length;
-        const reconstructedSignal = new Array(N).fill(0);
-        const fundamentalFreq = sampleRate / N;
-        
-        // Reconstruir señal con los armónicos seleccionados
-        for (let n = 0; n < numHarmonics; n++) {
-            if (harmonicAmplitudes[n] > 0) {
-                const amplitude = harmonicAmplitudes[n];
-                const phase = harmonicPhases[n];
-                const freq = n * fundamentalFreq;
-                
-                for (let t = 0; t < N; t++) {
-                    const angle = 2 * Math.PI * freq * t / sampleRate + phase;
-                    reconstructedSignal[t] += amplitude * Math.cos(angle);
+        // ✅ Versión corregida usando fft-js correctamente
+        function calculateCoefficients(signal) {
+            const N = signal.length;
+            const complexSignal = signal.map(x => [x, 0]);
+            const fftResult = basicFFT(signal);
+
+    
+            for (let i = 0; i < numHarmonics; i++) {
+                const coeffCard = document.getElementById(`coeff${i}`);
+                if (coeffCard) {
+                    const [re, im] = fftResult[i];
+                    const a = (re / N) * 2;
+                    const b = (im / N) * 2;
+    
+                    coeffCard.querySelector('.a-value').textContent = a.toExponential(2);
+                    coeffCard.querySelector('.b-value').textContent = b.toExponential(2);
+    
+                    harmonicAmplitudes[i] = Math.sqrt(a * a + b * b);
+                    harmonicPhases[i] = Math.atan2(b, a);
                 }
             }
         }
-        
-        // Normalizar la señal reconstruida
-        const maxVal = Math.max(...reconstructedSignal.map(Math.abs));
-        if (maxVal > 0) {
-            for (let t = 0; t < N; t++) {
-                reconstructedSignal[t] /= maxVal;
+    
+        function updateReconstruction() {
+            if (timeDomainData.length === 0) return;
+    
+            const N = timeDomainData.length;
+            const reconstructedSignal = new Array(N).fill(0);
+            const fundamentalFreq = sampleRate / N;
+    
+            for (let n = 0; n < numHarmonics; n++) {
+                if (harmonicAmplitudes[n] > 0) {
+                    const amplitude = harmonicAmplitudes[n];
+                    const phase = harmonicPhases[n];
+                    const freq = n * fundamentalFreq;
+    
+                    for (let t = 0; t < N; t++) {
+                        const angle = 2 * Math.PI * freq * t / sampleRate + phase;
+                        reconstructedSignal[t] += amplitude * Math.cos(angle);
+                    }
+                }
             }
-        }
-        
-        // Actualizar gráfico de reconstrucción
-        reconstructionChart.data.labels = Array.from({length: N}, (_, i) => i);
-        reconstructionChart.data.datasets[0].data = Array.from(timeDomainData);
-        reconstructionChart.data.datasets[1].data = reconstructedSignal;
-        reconstructionChart.update();
-        
-        // Actualizar fórmula matemática
-        updateFormula();
-    }
     
-    // Actualizar fórmula de reconstrucción
-    function updateFormula() {
-        let formula = "f(t) ≈ ";
-        const fundamentalFreq = sampleRate / analyser.fftSize;
-        
-        for (let n = 0; n < numHarmonics; n++) {
-            if (harmonicAmplitudes[n] > 0.01) {
-                const amplitude = harmonicAmplitudes[n].toFixed(2);
-                const phase = harmonicPhases[n].toFixed(2);
-                const freq = (n * fundamentalFreq).toFixed(0);
-                
-                if (n > 0) formula += " + ";
-                formula += `${amplitude}·cos(2π·${freq}·t + ${phase})`;
+            const maxVal = Math.max(...reconstructedSignal.map(Math.abs));
+            if (maxVal > 0) {
+                for (let t = 0; t < N; t++) {
+                    reconstructedSignal[t] /= maxVal;
+                }
             }
+    
+            reconstructionChart.data.labels = Array.from({ length: N }, (_, i) => i);
+            reconstructionChart.data.datasets[0].data = Array.from(timeDomainData);
+            reconstructionChart.data.datasets[1].data = reconstructedSignal;
+            reconstructionChart.update();
+    
+            updateFormula();
         }
-        
-        reconstructionFormula.textContent = formula;
-    }
     
-    // Inicialización
+        function updateFormula() {
+            let formula = "f(t) ≈ ";
+            const fundamentalFreq = sampleRate / analyser.fftSize;
     
-</script>
+            for (let n = 0; n < numHarmonics; n++) {
+                if (harmonicAmplitudes[n] > 0.01) {
+                    const amplitude = harmonicAmplitudes[n].toFixed(2);
+                    const phase = harmonicPhases[n].toFixed(2);
+                    const freq = (n * fundamentalFreq).toFixed(0);
+    
+                    if (n > 0) formula += " + ";
+                    formula += `${amplitude}·cos(2π·${freq}·t + ${phase})`;
+                }
+            }
+    
+            reconstructionFormula.textContent = formula;
+        }
+    </script>
+    
 </body>
 </html>
